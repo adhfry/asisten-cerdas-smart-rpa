@@ -530,6 +530,7 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
 
     maks_baris = sheet_data.max_row
     yes_to_all = False
+    skip_name_check = False
     tenaga_medis_tersimpan = None
     auto_print = False
     
@@ -615,12 +616,16 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
             is_nama_cocok = str(nama_excel).strip().lower() in str(nama_sistem).strip().lower() or str(nama_sistem).strip().lower() in str(nama_excel).strip().lower()
             if not is_nama_cocok:
                 print(f"⚠️ NAMA BERBEDA! Excel: {nama_excel} | Sistem: {nama_sistem}")
-                konf_nama = input("Tetap lanjut? (y/n): ").strip().lower()
-                if konf_nama != 'y':
-                    sheet_data.cell(row=row, column=19).value = "Dilewati: Nama Beda"
-                    sheet_data.cell(row=row, column=19).font = Font(color="FF0000")
-                    wb_data.save(path_file)
-                    continue
+                if not skip_name_check:
+                    konf_nama = input("Tetap lanjut? (ENTER/y = lanjut, n = lewati, a = lanjut semua tanpa cek nama): ").strip().lower()
+                    if konf_nama == 'a':
+                        skip_name_check = True
+                        print("⚠️ PERINGATAN: Mode lanjut semua aktif, nama beda tidak akan dicek lagi hingga selesai.")
+                    if konf_nama not in ("", "y", "a"):
+                        sheet_data.cell(row=row, column=19).value = "Dilewati: Nama Beda"
+                        sheet_data.cell(row=row, column=19).font = Font(color="FF0000")
+                        wb_data.save(path_file)
+                        continue
 
             # 8. Tampilkan Riwayat Pelayanan
             try:
@@ -1327,14 +1332,18 @@ def jalankan_pendaftaran(driver, wb_data, sheet_data, path_file):
             nama_tb_bersih = str(nama_tabel).strip().lower()
             if not (nama_ex_bersih in nama_tb_bersih or nama_tb_bersih in nama_ex_bersih):
                 print(f"\n⚠️ NAMA BEDA! Excel: {nama_excel} | Sistem: {nama_tabel}")
-                konf_nama = input("Tetap lanjut? (y/n): ").strip().lower()
-                if konf_nama != 'y':
-                    driver.find_element(By.ID, "batalRujukan_btn").click()
-                    time.sleep(1.5)
-                    sheet_data.cell(row=row, column=18).value = "Dilewati: Nama Beda"
-                    sheet_data.cell(row=row, column=18).font = Font(color="FF0000")
-                    wb_data.save(path_file)
-                    continue
+                if not skip_name_check:
+                    konf_nama = input("Tetap lanjut? (ENTER/y = lanjut, n = lewati, a = lanjut semua tanpa cek nama): ").strip().lower()
+                    if konf_nama == 'a':
+                        skip_name_check = True
+                        print("⚠️ PERINGATAN: Mode lanjut semua aktif, nama beda tidak akan dicek lagi hingga selesai.")
+                    if konf_nama not in ("", "y", "a"):
+                        driver.find_element(By.ID, "batalRujukan_btn").click()
+                        time.sleep(1.5)
+                        sheet_data.cell(row=row, column=18).value = "Dilewati: Nama Beda"
+                        sheet_data.cell(row=row, column=18).font = Font(color="FF0000")
+                        wb_data.save(path_file)
+                        continue
 
             btn_pilih_rujukan.click()
             time.sleep(1.5)
