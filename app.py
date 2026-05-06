@@ -549,7 +549,6 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
     maks_baris = sheet_data.max_row
     yes_to_all = False
     skip_name_check = False
-    skip_name_check = False
     tenaga_medis_tersimpan = None
     auto_print = False
     
@@ -1281,6 +1280,7 @@ def jalankan_pendaftaran(driver, wb_data, sheet_data, path_file):
     
     maks_baris = sheet_data.max_row
     yes_to_all = False
+    skip_name_check = False
     
     for row in range(4, maks_baris + 1):
         if cek_sesi_berakhir(driver):
