@@ -180,10 +180,28 @@ def elemen_terlihat(driver, by, selector):
     except Exception:
         return False
 
-def buka_tab(driver, tab_id, timeout=8):
+def safe_click(driver, by, selector, timeout=8, scroll=True):
     try:
-        driver.find_element(By.XPATH, f"//a[@href='#{tab_id}']").click()
+        elemen = WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((by, selector)))
+        if scroll:
+            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", elemen)
+            time.sleep(0.2)
+        elemen.click()
+        return True
     except Exception:
+        try:
+            elemen = driver.find_element(by, selector)
+            if scroll:
+                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", elemen)
+                time.sleep(0.2)
+            driver.execute_script("arguments[0].click();", elemen)
+            return True
+        except Exception as e:
+            print(f"⚠️ Gagal klik elemen {selector}: {str(e)[:30]}")
+            return False
+
+def buka_tab(driver, tab_id, timeout=8):
+    if not safe_click(driver, By.XPATH, f"//a[@href='#{tab_id}']"):
         return False
     try:
         WebDriverWait(driver, timeout).until(EC.visibility_of_element_located((By.ID, tab_id)))
@@ -429,7 +447,7 @@ def pastikan_form_kimia_darah(driver):
     try:
         btn = driver.find_element(By.ID, "tambahPelayanan_btn")
         if btn.is_displayed():
-            btn.click()
+            safe_click(driver, By.ID, "tambahPelayanan_btn")
             time.sleep(0.5)
             return "clicked"
     except:
@@ -941,7 +959,7 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                                     existing_gula = set(ambil_nama_pelayanan_dari_tabel(driver, "daftarPelayananGulaDarah"))
                                 if not daftar_mengandung(existing_gula, "Gula Darah Puasa"):
                                     if elemen_terlihat(driver, By.ID, "div_tambahPelayananGulaDarah_btn"):
-                                        driver.find_element(By.ID, "tambahPelayananGulaDarah_btn").click()
+                                        safe_click(driver, By.ID, "tambahPelayananGulaDarah_btn")
                                         time.sleep(0.5)
                                     WebDriverWait(driver, 8).until(
                                         EC.visibility_of_element_located((By.XPATH, "//div[@id='tabDet_10']//input[@id='hasil_txt']"))
@@ -951,7 +969,7 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                                     in_hasil_gdp = driver.find_element(By.XPATH, "//div[@id='tabDet_10']//input[@id='hasil_txt']")
                                     in_hasil_gdp.clear()
                                     in_hasil_gdp.send_keys(str(val_gdp).replace(',', '.'))
-                                    driver.find_element(By.XPATH, "//div[@id='tabDet_10']//button[@id='simpan_btn']").click()
+                                    safe_click(driver, By.XPATH, "//div[@id='tabDet_10']//button[@id='simpan_btn']")
                                     hasil, pesan = tunggu_hasil_simpan(driver)
                                     if hasil == "warning" and pesan:
                                         tandai_cannot_input(sheet_data, wb_data, path_file, row, pesan)
@@ -983,7 +1001,7 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                                     in_hasil_hba1c = driver.find_element(By.XPATH, "//div[@id='tabDet_11']//input[@id='hasil_txt']")
                                     in_hasil_hba1c.clear()
                                     in_hasil_hba1c.send_keys(str(val_hba1c).replace(',', '.'))
-                                    driver.find_element(By.XPATH, "//div[@id='tabDet_11']//button[@id='simpan_btn']").click()
+                                    safe_click(driver, By.XPATH, "//div[@id='tabDet_11']//button[@id='simpan_btn']")
                                     hasil, pesan = tunggu_hasil_simpan(driver)
                                     if hasil == "warning" and pesan:
                                         tandai_cannot_input(sheet_data, wb_data, path_file, row, pesan)
@@ -1020,7 +1038,7 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                         in_hasil.clear()
                         in_hasil.send_keys(val_str)
                         
-                        driver.find_element(By.XPATH, "//div[@id='tabDet_12']//button[@id='simpan_btn']").click()
+                        safe_click(driver, By.XPATH, "//div[@id='tabDet_12']//button[@id='simpan_btn']")
                         hasil, pesan = tunggu_hasil_simpan(driver)
                         if hasil == "warning" and pesan:
                             tandai_cannot_input(sheet_data, wb_data, path_file, row, pesan)
@@ -1034,8 +1052,8 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                     break
 
                 # [VALIDASI BIAYA]
-                driver.find_element(By.XPATH, "//a[@href='#tabDet_12']").click() # Balik ke tab kimia darah utk cek biaya
-                time.sleep(1)
+                buka_tab(driver, "tabDet_12")
+                time.sleep(0.5)
                 total_biaya_kimia = hitung_total_biaya_lab(driver, "tabDet_12", "daftarPelayanan_tbl")
                 
                 total_biaya_gdp = 0
