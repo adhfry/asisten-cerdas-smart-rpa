@@ -13,6 +13,9 @@ import os
 import glob
 import sys
 import json
+from datetime import datetime
+import urllib.request
+import urllib.error
 
 AUTO_PRINT_DELAY_SPP_MIN = 5
 AUTO_PRINT_DELAY_SPP_MAX = 10
@@ -22,6 +25,8 @@ AUTO_PRINT_POST_DELAY_SPP = 2
 AUTO_PRINT_POST_DELAY_FKPP = 3
 ENABLE_KIOSK_PRINTING = True
 PRINTER_NAME = "EPSON L120 Series"
+NOTIFY_URL = "https://api.silakes.labkesdasumenep.id/api/bot/v1/send-group-message"
+NOTIFY_SECRET_KEY = "kesehatanNo1@"
 
 # ====================================================================
 # FUNGSI UTILITAS & UI TERMINAL (INTERAKTIF)
@@ -254,6 +259,95 @@ def tunggu_captcha_dan_login(driver, timeout=600):
             mulai = time.time()
 
         time.sleep(0.3)
+
+def isi_kredensial(driver, username, password):
+    input_username = WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable((By.XPATH, "//input[@placeholder='Username']"))
+    )
+    time.sleep(random.uniform(0.3, 0.7))
+    driver.execute_script("arguments[0].removeAttribute('readonly', 0);", input_username)
+    input_username.click()
+    time.sleep(0.2)
+    input_username.clear()
+    ketik_seperti_manusia(input_username, str(username))
+
+    time.sleep(random.uniform(0.2, 0.5))
+
+    input_password = driver.find_element(By.XPATH, "//input[@placeholder='Password']")
+    driver.execute_script("arguments[0].removeAttribute('readonly', 0);", input_password)
+    input_password.click()
+    time.sleep(0.2)
+    input_password.clear()
+    ketik_seperti_manusia(input_password, str(password))
+
+def ambil_pesan_notif(driver):
+    try:
+        msg_el = driver.find_elements(By.CSS_SELECTOR, "[data-notify='message']")
+        return msg_el[0].text.strip() if msg_el else ""
+    except Exception:
+        return ""
+
+def tunggu_hasil_login(driver, timeout=15):
+    mulai = time.time()
+    while True:
+        if cek_modal_login_gagal(driver):
+            return "failed"
+        if elemen_terlihat(driver, By.XPATH, "//a[contains(text(), 'Entri Data')]"):
+            return "success"
+        msg = ambil_pesan_notif(driver)
+        if msg:
+            msg_lower = msg.lower()
+            if "gagal" in msg_lower or "captcha" in msg_lower or "password" in msg_lower or "username" in msg_lower:
+                return "failed"
+        if time.time() - mulai > timeout:
+            return "timeout"
+        time.sleep(0.3)
+
+def cek_modal_login_gagal(driver):
+    try:
+        modal_body = driver.find_element(By.CSS_SELECTOR, ".bootbox-body")
+        msg = modal_body.text.strip()
+        if msg:
+            msg_lower = msg.lower()
+            if "captcha" in msg_lower or "salah" in msg_lower or "gagal" in msg_lower:
+                try:
+                    driver.find_element(By.CSS_SELECTOR, "button.bootbox-accept").click()
+                except Exception:
+                    pass
+                return True
+    except Exception:
+        return False
+    return False
+
+def format_report_message(judul, nama_file, nama_sheet):
+    waktu = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+    return (
+        "╭──────────────╮\n"
+        "│ 🗓️ PCARE REPORT\n"
+        "│   SILAKES BOT PCARE\n"
+        "╰──────────────╯\n"
+        f"{judul}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Nama Excel : {nama_file}\n"
+        f"Sheet : {nama_sheet}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"SELESAI PADA WAKTU {waktu}"
+    )
+
+def kirim_notif_group(pesan):
+    payload = {"secretKey": NOTIFY_SECRET_KEY, "message": pesan}
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        NOTIFY_URL,
+        data=data,
+        headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return 200 <= resp.status < 300
+    except Exception as e:
+        print(f"⚠️ Gagal mengirim notifikasi: {str(e)[:60]}")
+        return False
 
 # ====================================================================
 # MODUL: PELAYANAN PASIEN
@@ -759,12 +853,15 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                 if perlu_gdp:
                     target_biaya += 12500
                 if perlu_hba1c:
-                    target_biaya += 162500
+                    target_biaya += 170000
             lab_sudah_dicek = False
             stop_semua = False
             lab_sudah_diinput = False
             cannot_be_input = False
             lab_berhasil = False
+            max_retry_lab = 6
+            retry_count = 0
+            layanan_tidak_input = []
             
             while True:
                 print(f"\n-> Memproses input hasil laboratorium. Target Biaya: Rp {target_biaya:,}")
@@ -958,6 +1055,46 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                     lab_berhasil = True
                     break # Keluar dari loop lab jika biaya sudah cocok
                 else:
+                    retry_count += 1
+                    layanan_tidak_input = []
+                    if buka_tab(driver, "tabDet_12"):
+                        time.sleep(0.3)
+                    kimia_box_ada_now = elemen_terlihat(driver, By.ID, "listKimiaDarah_lyt")
+                    existing_kimia_now = set(ambil_nama_pelayanan_dari_tabel(driver, "daftarPelayanan_tbl")) if kimia_box_ada_now else set()
+                    expected_kimia_now = [nama for nama, val in kimia_darah_tests if val is not None and str(val).strip() != ""]
+                    missing_kimia_now = [nama for nama in expected_kimia_now if nama not in existing_kimia_now]
+                    layanan_tidak_input.extend(missing_kimia_now)
+
+                    if perlu_gdp:
+                        buka_tab(driver, "tabDet_10")
+                        time.sleep(0.3)
+                        existing_gula_now = set(ambil_nama_pelayanan_dari_tabel(driver, "daftarPelayananGulaDarah"))
+                        if not daftar_mengandung(existing_gula_now, "Gula Darah Puasa"):
+                            layanan_tidak_input.append("Gula Darah Puasa")
+
+                    if perlu_hba1c:
+                        buka_tab(driver, "tabDet_11")
+                        time.sleep(0.3)
+                        try:
+                            btn_hba1c = driver.find_element(By.XPATH, "//div[@id='tabDet_11']//button[@id='simpan_btn']")
+                            hba1c_ok = not btn_hba1c.is_enabled()
+                        except Exception:
+                            hba1c_ok = False
+                        if not hba1c_ok:
+                            layanan_tidak_input.append("HbA1c")
+
+                    if not layanan_tidak_input:
+                        layanan_tidak_input = ["LAB TIDAK LENGKAP"]
+
+                    if retry_count >= max_retry_lab:
+                        pesan_skip = f"CANNOT INPUT ({', '.join(layanan_tidak_input)})"
+                        sheet_data.cell(row=row, column=29).value = "CANNOT INPUT"
+                        sheet_data.cell(row=row, column=30).value = pesan_skip
+                        sheet_data.cell(row=row, column=29).font = Font(color="FF0000")
+                        wb_data.save(path_file)
+                        print(f"-> ⚠️ {pesan_skip}. Melewati pasien ini.")
+                        break
+
                     print("-> ❌ PERINGATAN: Ada data lab yang gagal tersimpan ke server PCare (Bug Jaringan/Sistem).")
                     if yes_to_all:
                         print("-> Mengulangi proses penginputan lab secara otomatis...")
@@ -1088,6 +1225,11 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
             else:
                 driver.get("https://pcarejkn.bpjs-kesehatan.go.id/eclaim/EntriKunjunganDokkel")
                 tunggu_loading_pace(driver)
+    else:
+        nama_file = os.path.basename(path_file)
+        nama_sheet = sheet_data.title
+        pesan = format_report_message("SELESAI INPUT PELAYANAN PASIEN", nama_file, nama_sheet)
+        kirim_notif_group(pesan)
 
 # ====================================================================
 # MODUL: PENDAFTARAN PASIEN 
@@ -1241,6 +1383,11 @@ def jalankan_pendaftaran(driver, wb_data, sheet_data, path_file):
             else:
                 driver.get("https://pcarejkn.bpjs-kesehatan.go.id/eclaim/EntriDaftarDokkel")
                 tunggu_loading_pace(driver)
+    else:
+        nama_file = os.path.basename(path_file)
+        nama_sheet = sheet_data.title
+        pesan = format_report_message("SELESAI INPUT PENDAFTARAN PASIEN", nama_file, nama_sheet)
+        kirim_notif_group(pesan)
 
 
 # ====================================================================
@@ -1290,35 +1437,36 @@ def jalankan_agent():
     print(f"\nMencoba login otomatis untuk: {username}")
 
     try:
-        input_username = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//input[@placeholder='Username']")))
-        time.sleep(random.uniform(0.5, 1.0)) 
-        driver.execute_script("arguments[0].removeAttribute('readonly', 0);", input_username)
-        input_username.click()
-        time.sleep(0.2)
-        input_username.clear()
-        ketik_seperti_manusia(input_username, str(username))
+        while True:
+            isi_kredensial(driver, username, password)
 
-        time.sleep(random.uniform(0.2, 0.5))
+            print("\n" + "="*60)
+            print("MENGUNGGU INPUT CAPTCHA")
+            print("1. Username dan Password sudah diisi otomatis.")
+            print("2. Silakan ketik kode CAPTCHA di browser (5-6 karakter).")
+            print("3. Bot akan klik 'Sign In' otomatis setelah terdeteksi.")
+            print("="*60)
+            
+            if not tunggu_captcha_dan_login(driver):
+                print("-> Proses login dibatalkan.")
+                return
+            
+            tunggu_loading_pace(driver)
+            hasil_login = tunggu_hasil_login(driver, timeout=15)
+            if hasil_login == "success":
+                break
+            if hasil_login == "failed":
+                print("⚠️ Login gagal. Mengulang input username/password...")
+                tunggu_loading_pace(driver)
+                try:
+                    driver.find_element(By.ID, "CaptchaInputText").clear()
+                except Exception:
+                    pass
+                continue
+            lanjut = input("Login belum terdeteksi. ENTER = coba lagi, n = batal: ").strip().lower()
+            if lanjut == 'n':
+                return
 
-        input_password = driver.find_element(By.XPATH, "//input[@placeholder='Password']") 
-        driver.execute_script("arguments[0].removeAttribute('readonly', 0);", input_password)
-        input_password.click()
-        time.sleep(0.2)
-        input_password.clear()
-        ketik_seperti_manusia(input_password, str(password))
-
-        print("\n" + "="*60)
-        print("MENGUNGGU INPUT CAPTCHA")
-        print("1. Username dan Password sudah diisi otomatis.")
-        print("2. Silakan ketik kode CAPTCHA di browser (5-6 karakter).")
-        print("3. Bot akan klik 'Sign In' otomatis setelah terdeteksi.")
-        print("="*60)
-        
-        if not tunggu_captcha_dan_login(driver):
-            print("-> Proses login dibatalkan.")
-            return
-        
-        tunggu_loading_pace(driver)
         try:
             btn_modal_ok = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.bootbox-accept")))
             btn_modal_ok.click()
