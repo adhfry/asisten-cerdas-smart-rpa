@@ -3,14 +3,25 @@ from openpyxl.styles import Font, PatternFill
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, UnexpectedAlertPresentException
+from selenium.webdriver.chrome.options import Options
 import time
 import random
 import os
 import glob
 import sys
+import json
+
+AUTO_PRINT_DELAY_SPP_MIN = 5
+AUTO_PRINT_DELAY_SPP_MAX = 10
+AUTO_PRINT_DELAY_FKPP_MIN = 10
+AUTO_PRINT_DELAY_FKPP_MAX = 15
+AUTO_PRINT_POST_DELAY_SPP = 2
+AUTO_PRINT_POST_DELAY_FKPP = 3
+ENABLE_KIOSK_PRINTING = True
+PRINTER_NAME = "EPSON L120 Series"
 
 # ====================================================================
 # FUNGSI UTILITAS & UI TERMINAL (INTERAKTIF)
@@ -157,6 +168,93 @@ def pilih_select2(driver, elemen_id_asli, nilai_pencarian):
     except Exception as e:
         print(f"   [!] Gagal memilih dropdown {elemen_id_asli}: {str(e)[:30]}")
 
+def elemen_terlihat(driver, by, selector):
+    try:
+        elemen = driver.find_element(by, selector)
+        return elemen.is_displayed()
+    except Exception:
+        return False
+
+def buka_tab(driver, tab_id, timeout=8):
+    try:
+        driver.find_element(By.XPATH, f"//a[@href='#{tab_id}']").click()
+    except Exception:
+        return False
+    try:
+        WebDriverWait(driver, timeout).until(EC.visibility_of_element_located((By.ID, tab_id)))
+        return True
+    except Exception:
+        return False
+
+def daftar_mengandung(daftar, kata_kunci):
+    kata = str(kata_kunci).upper()
+    return any(kata in str(item).upper() for item in daftar)
+
+def pilih_opsi_dropdown(driver, elemen_id, kata_kunci):
+    try:
+        select_el = driver.find_element(By.ID, elemen_id)
+        sel = Select(select_el)
+        for opt in sel.options:
+            if kata_kunci.lower() in opt.text.lower():
+                sel.select_by_visible_text(opt.text)
+                return True
+    except Exception:
+        pass
+    try:
+        pilih_select2(driver, elemen_id, kata_kunci)
+        return True
+    except Exception:
+        return False
+
+def tunggu_tab_nonkapi(driver, timeout=12):
+    try:
+        WebDriverWait(driver, timeout).until(EC.visibility_of_element_located((By.ID, "tabTindakan")))
+        return True
+    except Exception:
+        return False
+
+def jalankan_auto_print(driver, min_delay, max_delay, post_delay):
+    time.sleep(random.uniform(min_delay, max_delay))
+    try:
+        driver.execute_script("window.print();")
+        time.sleep(post_delay)
+        return True
+    except Exception:
+        return False
+
+def tunggu_captcha_dan_login(driver, timeout=600):
+    try:
+        WebDriverWait(driver, 30).until(EC.visibility_of_element_located((By.ID, "CaptchaInputText")))
+    except Exception:
+        print("⚠️ CAPTCHA tidak ditemukan. Pastikan halaman login terbuka.")
+        return False
+
+    mulai = time.time()
+    while True:
+        try:
+            captcha_val = driver.find_element(By.ID, "CaptchaInputText").get_attribute("value")
+        except Exception:
+            captcha_val = ""
+
+        if captcha_val and 5 <= len(captcha_val.strip()) <= 6:
+            for s in range(3, 0, -1):
+                print(f"-> CAPTCHA terdeteksi. Login otomatis dalam {s}...")
+                time.sleep(1)
+            try:
+                driver.find_element(By.ID, "btnLogin").click()
+                return True
+            except Exception as e:
+                print(f"⚠️ Gagal klik Sign In: {str(e)[:30]}")
+                return False
+
+        if time.time() - mulai > timeout:
+            lanjut = input("CAPTCHA belum terdeteksi. ENTER = lanjut menunggu, n = batal: ").strip().lower()
+            if lanjut == 'n':
+                return False
+            mulai = time.time()
+
+        time.sleep(0.3)
+
 # ====================================================================
 # MODUL: PELAYANAN PASIEN
 # ====================================================================
@@ -300,6 +398,8 @@ def buka_riwayat_setelah_simpan(driver, tgl_rujukan):
     btn_pilih.click()
     tunggu_loading_pace(driver)
     time.sleep(1.0)
+    if not tunggu_tab_nonkapi(driver):
+        print("⚠️ Tab Non Kapitasi belum muncul, melanjutkan dengan hati-hati.")
     return True
 
 def pilih_baris_riwayat_berdasarkan_tanggal(driver, tgl_rujukan):
@@ -337,6 +437,7 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
     maks_baris = sheet_data.max_row
     yes_to_all = False
     tenaga_medis_tersimpan = None
+    auto_print = False
     
     for row in range(4, maks_baris + 1):
         if cek_sesi_berakhir(driver):
@@ -465,6 +566,8 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
             btn_pilih_riwayat.click()
             tunggu_loading_pace(driver)
             time.sleep(1.5)
+            if not tunggu_tab_nonkapi(driver):
+                print("⚠️ Tab Non Kapitasi belum muncul, melanjutkan dengan hati-hati.")
             
             if not gunakan_riwayat_lab:
                 # 10. Ekstrak Data Lama
@@ -637,7 +740,7 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
             
             # L. PENGISIAN PELAYANAN NON KAPITASI (HASIL LAB DARI EXCEL)
             # Pengecekan dilakukan berulang hingga total biaya cocok
-            target_biaya = 562500 if "DM" in penyakit_upper else 380000
+            target_biaya_kimia = 380000
             kimia_darah_tests = [
                 ("Kolesterol Total", sheet_data.cell(row, 9).value), # I
                 ("Trigliserida", sheet_data.cell(row, 10).value), # J
@@ -649,6 +752,14 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
             ]
             val_gdp = sheet_data.cell(row, 8).value # Kolom H
             val_hba1c = sheet_data.cell(row, 15).value # Kolom O
+            perlu_gdp = "DM" in penyakit_upper and val_gdp is not None and str(val_gdp).strip() != ""
+            perlu_hba1c = "DM" in penyakit_upper and val_hba1c is not None and str(val_hba1c).strip() != ""
+            target_biaya = target_biaya_kimia
+            if "DM" in penyakit_upper:
+                if perlu_gdp:
+                    target_biaya += 12500
+                if perlu_hba1c:
+                    target_biaya += 162500
             lab_sudah_dicek = False
             stop_semua = False
             lab_sudah_diinput = False
@@ -657,17 +768,31 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
             
             while True:
                 print(f"\n-> Memproses input hasil laboratorium. Target Biaya: Rp {target_biaya:,}")
-                
-                # Pastikan tab Kimia Darah aktif
-                driver.find_element(By.XPATH, "//a[@href='#tabDet_12']").click()
-                time.sleep(1)
+                existing_kimia = set()
+                existing_gula = set()
+                hba1c_tersimpan = False
+
+                if "DM" in penyakit_upper:
+                    if buka_tab(driver, "tabDet_10"):
+                        time.sleep(0.5)
+                        if elemen_terlihat(driver, By.ID, "div_tambahPelayananGulaDarah_btn"):
+                            existing_gula = set(ambil_nama_pelayanan_dari_tabel(driver, "daftarPelayananGulaDarah"))
+                    else:
+                        print("⚠️ Tab Pelayanan Gula Darah tidak ditemukan.")
+
+                    if buka_tab(driver, "tabDet_11"):
+                        time.sleep(0.5)
+                        try:
+                            btn_hba1c = driver.find_element(By.XPATH, "//div[@id='tabDet_11']//button[@id='simpan_btn']")
+                            hba1c_tersimpan = not btn_hba1c.is_enabled()
+                        except Exception:
+                            hba1c_tersimpan = False
+
+                if buka_tab(driver, "tabDet_12"):
+                    time.sleep(0.5)
                 
                 kimia_box_ada = False
-                try:
-                    kimia_box_ada = driver.find_element(By.ID, "listKimiaDarah_lyt").is_displayed()
-                except:
-                    kimia_box_ada = False
-                
+                kimia_box_ada = elemen_terlihat(driver, By.ID, "listKimiaDarah_lyt")
                 existing_kimia = set(ambil_nama_pelayanan_dari_tabel(driver, "daftarPelayanan_tbl")) if kimia_box_ada else set()
                 if not kimia_box_ada:
                     print("⚠️ Box Pelayanan Kimia Darah tidak ditemukan. Coba ulang atau refresh.")
@@ -675,31 +800,14 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                 if not lab_sudah_dicek:
                     expected_kimia = [nama for nama, val in kimia_darah_tests if val is not None and str(val).strip() != ""]
                     missing_kimia = [nama for nama in expected_kimia if nama not in existing_kimia]
-                    existing_gula = set()
                     missing_gula = []
                     hba1c_kurang = False
                     
                     if "DM" in penyakit_upper:
-                        driver.find_element(By.XPATH, "//a[@href='#tabDet_10']").click()
-                        time.sleep(1)
-                        existing_gula = set(ambil_nama_pelayanan_dari_tabel(driver, "daftarPelayananGulaDarah"))
-                        expected_gula = []
-                        if val_gdp is not None and str(val_gdp).strip() != "":
-                            expected_gula.append("Gula Darah Puasa")
-                        missing_gula = [nama for nama in expected_gula if nama not in existing_gula]
-                        
-                        driver.find_element(By.XPATH, "//a[@href='#tabDet_11']").click()
-                        time.sleep(1)
-                        hba1c_val = ""
-                        try:
-                            hba1c_val = driver.find_element(By.XPATH, "//div[@id='tabDet_11']//input[@id='hasil_txt']").get_attribute('value')
-                        except:
-                            hba1c_val = ""
-                        if val_hba1c is not None and str(val_hba1c).strip() != "":
-                            hba1c_kurang = str(hba1c_val).strip() == ""
-                        
-                        driver.find_element(By.XPATH, "//a[@href='#tabDet_12']").click()
-                        time.sleep(1)
+                        if perlu_gdp and not daftar_mengandung(existing_gula, "Gula Darah Puasa"):
+                            missing_gula = ["Gula Darah Puasa"]
+                        if perlu_hba1c:
+                            hba1c_kurang = not hba1c_tersimpan
                     
                     print("\n" + "-"*40)
                     print(" RINGKASAN CEK LAB (TARGET HT/DM)")
@@ -709,7 +817,7 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                     if "DM" in penyakit_upper:
                         print(f" Gula Darah - sudah: {', '.join(sorted(existing_gula)) if existing_gula else '-'}")
                         print(f" Gula Darah - kurang: {', '.join(missing_gula) if missing_gula else '-'}")
-                        if val_hba1c is not None and str(val_hba1c).strip() != "":
+                        if perlu_hba1c:
                             print(f" HbA1c - sudah: {'YA' if not hba1c_kurang else 'BELUM'}")
                     print("-"*40)
                     
@@ -721,6 +829,76 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                             break
                     lab_sudah_dicek = True
                 
+                # --- GULA DARAH & HBA1C (HANYA DM) ---
+                if "DM" in penyakit_upper:
+                    try:
+                        if perlu_gdp:
+                            if buka_tab(driver, "tabDet_10"):
+                                time.sleep(0.5)
+                                if elemen_terlihat(driver, By.ID, "div_tambahPelayananGulaDarah_btn"):
+                                    existing_gula = set(ambil_nama_pelayanan_dari_tabel(driver, "daftarPelayananGulaDarah"))
+                                if not daftar_mengandung(existing_gula, "Gula Darah Puasa"):
+                                    if elemen_terlihat(driver, By.ID, "div_tambahPelayananGulaDarah_btn"):
+                                        driver.find_element(By.ID, "tambahPelayananGulaDarah_btn").click()
+                                        time.sleep(0.5)
+                                    WebDriverWait(driver, 8).until(
+                                        EC.visibility_of_element_located((By.XPATH, "//div[@id='tabDet_10']//input[@id='hasil_txt']"))
+                                    )
+                                    if not pilih_opsi_dropdown(driver, "cb_jns_pemeriksaan_darah", "Gula Darah Puasa"):
+                                        print("⚠️ Gagal memilih jenis pemeriksaan Gula Darah Puasa.")
+                                    in_hasil_gdp = driver.find_element(By.XPATH, "//div[@id='tabDet_10']//input[@id='hasil_txt']")
+                                    in_hasil_gdp.clear()
+                                    in_hasil_gdp.send_keys(str(val_gdp).replace(',', '.'))
+                                    driver.find_element(By.XPATH, "//div[@id='tabDet_10']//button[@id='simpan_btn']").click()
+                                    hasil, pesan = tunggu_hasil_simpan(driver)
+                                    if hasil == "warning" and pesan:
+                                        tandai_cannot_input(sheet_data, wb_data, path_file, row, pesan)
+                                        cannot_be_input = True
+                                        break
+                                    time.sleep(1)
+                                    if elemen_terlihat(driver, By.ID, "div_tambahPelayananGulaDarah_btn"):
+                                        existing_gula = set(ambil_nama_pelayanan_dari_tabel(driver, "daftarPelayananGulaDarah"))
+
+                        if perlu_hba1c:
+                            if buka_tab(driver, "tabDet_11"):
+                                time.sleep(0.5)
+                                try:
+                                    btn_hba1c = driver.find_element(By.XPATH, "//div[@id='tabDet_11']//button[@id='simpan_btn']")
+                                except Exception:
+                                    btn_hba1c = None
+
+                                if btn_hba1c and btn_hba1c.is_enabled():
+                                    if not elemen_terlihat(driver, By.XPATH, "//div[@id='tabDet_11']//input[@id='hasil_txt']"):
+                                        try:
+                                            btn_tambah = driver.find_element(By.XPATH, "//div[@id='tabDet_11']//button[contains(., 'Tambah Data Baru') or contains(@id, 'tambah')]")
+                                            btn_tambah.click()
+                                            time.sleep(0.5)
+                                        except Exception:
+                                            pass
+                                    WebDriverWait(driver, 8).until(
+                                        EC.visibility_of_element_located((By.XPATH, "//div[@id='tabDet_11']//input[@id='hasil_txt']"))
+                                    )
+                                    in_hasil_hba1c = driver.find_element(By.XPATH, "//div[@id='tabDet_11']//input[@id='hasil_txt']")
+                                    in_hasil_hba1c.clear()
+                                    in_hasil_hba1c.send_keys(str(val_hba1c).replace(',', '.'))
+                                    driver.find_element(By.XPATH, "//div[@id='tabDet_11']//button[@id='simpan_btn']").click()
+                                    hasil, pesan = tunggu_hasil_simpan(driver)
+                                    if hasil == "warning" and pesan:
+                                        tandai_cannot_input(sheet_data, wb_data, path_file, row, pesan)
+                                        cannot_be_input = True
+                                        break
+                                    time.sleep(1)
+                                    hba1c_tersimpan = True
+                                elif btn_hba1c and not btn_hba1c.is_enabled():
+                                    hba1c_tersimpan = True
+                    except Exception as e:
+                        print(f"⚠️ Gagal memproses Gula Darah / HbA1c: {str(e)[:30]}")
+                if cannot_be_input:
+                    break
+
+                # --- KIMIA DARAH ---
+                if buka_tab(driver, "tabDet_12"):
+                    time.sleep(0.5)
                 try:
                     for nama_test, val_lab in kimia_darah_tests:
                         if val_lab is None or str(val_lab).strip() == "":
@@ -728,7 +906,7 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                         if nama_test in existing_kimia:
                             continue
                         
-                        if nama_test == "Microalbuminaria" and str(val_lab).strip().upper() == "TIDAK ADA URINE":
+                        if nama_test == "Microalbuminaria" and str(val_lab).strip().upper() == "TIDAK ADA URINE" or str(val_lab).strip().upper() == "":
                             val_lab = str(round(random.uniform(5.3, 19.9), 1))
                         
                         val_str = str(val_lab).replace(',', '.')
@@ -752,48 +930,6 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                     print(f"⚠️ Gagal memproses Kimia Darah: {str(e)[:30]}")
                 if cannot_be_input:
                     break
-                
-                # --- GULA DARAH & HBA1C (HANYA DM) ---
-                if "DM" in penyakit_upper:
-                    try:
-                        driver.find_element(By.XPATH, "//a[@href='#tabDet_10']").click()
-                        time.sleep(1)
-                        existing_gula = set(ambil_nama_pelayanan_dari_tabel(driver, "daftarPelayananGulaDarah"))
-                        if val_gdp is not None and str(val_gdp).strip() != "":
-                            if "Gula Darah Puasa" not in existing_gula:
-                                driver.find_element(By.XPATH, "//div[@id='tabDet_10']//button[@id='tambahPelayananGulaDarah_btn']").click()
-                                time.sleep(0.5)
-                                pilih_select2(driver, "cb_jns_pemeriksaan_darah", "Gula Darah Puasa")
-                                
-                                in_hasil_gdp = driver.find_element(By.XPATH, "//div[@id='tabDet_10']//input[@id='hasil_txt']")
-                                in_hasil_gdp.clear()
-                                in_hasil_gdp.send_keys(str(val_gdp).replace(',', '.'))
-                                driver.find_element(By.XPATH, "//div[@id='tabDet_10']//button[@id='simpan_btn']").click()
-                                hasil, pesan = tunggu_hasil_simpan(driver)
-                                if hasil == "warning" and pesan:
-                                    tandai_cannot_input(sheet_data, wb_data, path_file, row, pesan)
-                                    cannot_be_input = True
-                                    break
-                                time.sleep(1)
-                        
-                        driver.find_element(By.XPATH, "//a[@href='#tabDet_11']").click()
-                        time.sleep(1)
-                        if val_hba1c is not None and str(val_hba1c).strip() != "":
-                            in_hasil_hba1c = driver.find_element(By.XPATH, "//div[@id='tabDet_11']//input[@id='hasil_txt']")
-                            if in_hasil_hba1c.get_attribute('value') == "":
-                                in_hasil_hba1c.clear()
-                                in_hasil_hba1c.send_keys(str(val_hba1c).replace(',', '.'))
-                                driver.find_element(By.XPATH, "//div[@id='tabDet_11']//button[@id='simpan_btn']").click()
-                                hasil, pesan = tunggu_hasil_simpan(driver)
-                                if hasil == "warning" and pesan:
-                                    tandai_cannot_input(sheet_data, wb_data, path_file, row, pesan)
-                                    cannot_be_input = True
-                                    break
-                                time.sleep(1)
-                    except Exception as e:
-                        print(f"⚠️ Gagal memproses Gula Darah / HbA1c: {str(e)[:30]}")
-                if cannot_be_input:
-                    break
 
                 # [VALIDASI BIAYA]
                 driver.find_element(By.XPATH, "//a[@href='#tabDet_12']").click() # Balik ke tab kimia darah utk cek biaya
@@ -802,13 +938,12 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                 
                 total_biaya_gdp = 0
                 if "DM" in penyakit_upper:
-                    driver.find_element(By.XPATH, "//a[@href='#tabDet_10']").click()
-                    time.sleep(1)
+                    buka_tab(driver, "tabDet_10")
+                    time.sleep(0.5)
                     total_biaya_gdp = hitung_total_biaya_lab(driver, "tabDet_10", "daftarPelayananGulaDarah")
                     
                     # Tambah biaya HbA1c (fix 162.500 jika ada)
-                    val_hba1c = sheet_data.cell(row, 15).value
-                    if val_hba1c is not None and str(val_hba1c).strip() != "":
+                    if perlu_hba1c and hba1c_tersimpan:
                         total_biaya_gdp += 162500
                 
                 biaya_saat_ini = total_biaya_kimia + total_biaya_gdp
@@ -855,7 +990,18 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
             for win in driver.window_handles:
                 if win != window_utama:
                     driver.switch_to.window(win)
-                    if not yes_to_all:
+                    if not auto_print:
+                        tanya_auto = input("Otomatis print semua? (1 = Ya, ENTER = Manual): ").strip()
+                        if tanya_auto == '1':
+                            auto_print = True
+                    if auto_print:
+                        jalankan_auto_print(
+                            driver,
+                            AUTO_PRINT_DELAY_SPP_MIN,
+                            AUTO_PRINT_DELAY_SPP_MAX,
+                            AUTO_PRINT_POST_DELAY_SPP
+                        )
+                    else:
                         konfirmasi_spp = input("Selesai print SPP? (ENTER/y = tutup, n = stop): ").strip().lower()
                         if konfirmasi_spp == 'n':
                             stop_semua = True
@@ -883,7 +1029,18 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                 for win in driver.window_handles:
                     if win != window_utama:
                         driver.switch_to.window(win)
-                        if not yes_to_all:
+                        if not auto_print:
+                            tanya_auto = input("Otomatis print semua? (1 = Ya, ENTER = Manual): ").strip()
+                            if tanya_auto == '1':
+                                auto_print = True
+                        if auto_print:
+                            jalankan_auto_print(
+                                driver,
+                                AUTO_PRINT_DELAY_FKPP_MIN,
+                                AUTO_PRINT_DELAY_FKPP_MAX,
+                                AUTO_PRINT_POST_DELAY_FKPP
+                            )
+                        else:
                             konfirmasi_fkpp = input("Selesai print FKPP? (ENTER/y = tutup, n = stop): ").strip().lower()
                             if konfirmasi_fkpp == 'n':
                                 stop_semua = True
@@ -1113,7 +1270,20 @@ def jalankan_agent():
         return
 
     print("Membuka browser...")
-    driver = webdriver.Chrome()
+    chrome_options = Options()
+    if ENABLE_KIOSK_PRINTING:
+        chrome_options.add_argument("--kiosk-printing")
+        if PRINTER_NAME:
+            app_state = {
+                "recentDestinations": [{"id": PRINTER_NAME, "origin": "local", "account": ""}],
+                "selectedDestinationId": PRINTER_NAME,
+                "version": 2
+            }
+            chrome_options.add_experimental_option(
+                "prefs",
+                {"printing.print_preview_sticky_settings.appState": json.dumps(app_state)}
+            )
+    driver = webdriver.Chrome(options=chrome_options)
     driver.maximize_window()
     driver.get("https://pcarejkn.bpjs-kesehatan.go.id/eclaim/login")
 
@@ -1138,13 +1308,15 @@ def jalankan_agent():
         ketik_seperti_manusia(input_password, str(password))
 
         print("\n" + "="*60)
-        print("MENGUNGGU INTERVENSI MANUSIA: CAPTCHA TERDETEKSI!")
+        print("MENGUNGGU INPUT CAPTCHA")
         print("1. Username dan Password sudah diisi otomatis.")
-        print("2. Silakan ketik kode CAPTCHA di browser.")
-        print("3. Klik tombol 'Sign In' di browser secara manual.")
+        print("2. Silakan ketik kode CAPTCHA di browser (5-6 karakter).")
+        print("3. Bot akan klik 'Sign In' otomatis setelah terdeteksi.")
         print("="*60)
         
-        input("\n[TEKAN ENTER DI SINI JIKA ANDA SUDAH MASUK KE DASHBOARD PCARE]...")
+        if not tunggu_captcha_dan_login(driver):
+            print("-> Proses login dibatalkan.")
+            return
         
         tunggu_loading_pace(driver)
         try:
