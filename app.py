@@ -549,6 +549,7 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
     maks_baris = sheet_data.max_row
     yes_to_all = False
     skip_name_check = False
+    skip_name_check = False
     tenaga_medis_tersimpan = None
     auto_print = False
     
@@ -1346,6 +1347,9 @@ def jalankan_pendaftaran(driver, wb_data, sheet_data, path_file):
                     if konf == 'n': break
                 continue
 
+            if yes_to_all and not skip_name_check:
+                skip_name_check = True
+
             nama_ex_bersih = str(nama_excel).strip().lower()
             nama_tb_bersih = str(nama_tabel).strip().lower()
             if not (nama_ex_bersih in nama_tb_bersih or nama_tb_bersih in nama_ex_bersih):
@@ -1354,6 +1358,7 @@ def jalankan_pendaftaran(driver, wb_data, sheet_data, path_file):
                     konf_nama = input("Tetap lanjut? (ENTER/y = lanjut, n = lewati, a = lanjut semua tanpa cek nama): ").strip().lower()
                     if konf_nama == 'a':
                         skip_name_check = True
+                        yes_to_all = True
                         print("⚠️ PERINGATAN: Mode lanjut semua aktif, nama beda tidak akan dicek lagi hingga selesai.")
                     if konf_nama not in ("", "y", "a"):
                         driver.find_element(By.ID, "batalRujukan_btn").click()
