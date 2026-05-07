@@ -23,6 +23,7 @@ AUTO_PRINT_DELAY_FKPP_MIN = 10
 AUTO_PRINT_DELAY_FKPP_MAX = 15
 AUTO_PRINT_POST_DELAY_SPP = 2
 AUTO_PRINT_POST_DELAY_FKPP = 3
+AUTO_PRINT_MIN_DELAY = 2
 ENABLE_KIOSK_PRINTING = True
 PRINTER_NAME = "EPSON L120 Series" #sesuaikan dengan nama printer yang ada di settingn printer Windows Anda atau isi 'Microsoft Print to PDF'
 NOTIFY_URL = "https://api.silakes.labkesdasumenep.id/api/bot/v1/send-group-message"
@@ -237,6 +238,8 @@ def tunggu_tab_nonkapi(driver, timeout=12):
         return False
 
 def jalankan_auto_print(driver, min_delay, max_delay, post_delay):
+    min_delay = max(min_delay, AUTO_PRINT_MIN_DELAY)
+    max_delay = max(max_delay, min_delay)
     time.sleep(random.uniform(min_delay, max_delay))
     try:
         driver.execute_script("window.print();")
