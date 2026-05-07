@@ -24,7 +24,7 @@ AUTO_PRINT_DELAY_FKPP_MAX = 15
 AUTO_PRINT_POST_DELAY_SPP = 2
 AUTO_PRINT_POST_DELAY_FKPP = 3
 ENABLE_KIOSK_PRINTING = True
-PRINTER_NAME = "EPSON L120 Series"
+PRINTER_NAME = "EPSON L120 Series" #sesuaikan dengan nama printer yang ada di settingn printer Windows Anda atau isi 'Microsoft Print to PDF'
 NOTIFY_URL = "https://api.silakes.labkesdasumenep.id/api/bot/v1/send-group-message"
 NOTIFY_SECRET_KEY = "kesehatanNo1@"
 
@@ -455,64 +455,95 @@ def pastikan_form_kimia_darah(driver):
     
     return "unknown"
 
-def buka_riwayat_setelah_simpan(driver, tgl_rujukan):
-    try:
-        driver.execute_script("window.scrollTo(0, 0);")
-    except:
-        pass
-
-    try:
-        btn_cari = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "btnCariPendaftaran")))
-        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", btn_cari)
-        time.sleep(0.2)
-        btn_cari.click()
-        tunggu_loading_pace(driver)
-    except Exception as e:
-        print(f"⚠️ Gagal klik Cari Pendaftaran: {str(e)[:30]}")
-        return False
-
-    try:
-        link_riwayat = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "#linkRiwayat a")))
-        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", link_riwayat)
-        time.sleep(0.2)
-        link_riwayat.click()
-    except Exception:
+def buka_riwayat_setelah_simpan(driver, tgl_rujukan, max_retry=3, require_labkes=False):
+    for percobaan in range(1, max_retry + 1):
         try:
-            driver.execute_script("Riwayat.instance.toggleRiwayatPelayanan();")
+            driver.execute_script("window.scrollTo(0, 0);")
+        except:
+            pass
+
+        try:
+            btn_cari = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "btnCariPendaftaran")))
+            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", btn_cari)
+            time.sleep(0.2)
+            btn_cari.click()
+            tunggu_loading_pace(driver)
         except Exception as e:
-            print(f"⚠️ Gagal membuka riwayat: {str(e)[:30]}")
+            print(f"⚠️ Gagal klik Cari Pendaftaran (percobaan {percobaan}/{max_retry}): {str(e)[:30]}")
+            if percobaan < max_retry:
+                time.sleep(1)
+                continue
             return False
 
-    tunggu_loading_pace(driver)
-    try:
-        WebDriverWait(driver, 15).until(EC.invisibility_of_element_located((By.ID, "riwayatPelayanan_processing")))
-    except:
-        pass
-    try:
-        WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.ID, "riwayatPelayanan")))
-    except Exception:
-        print("⚠️ Tabel riwayat tidak muncul.")
-        return False
+        try:
+            link_riwayat = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "#linkRiwayat a")))
+            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", link_riwayat)
+            time.sleep(0.2)
+            link_riwayat.click()
+        except Exception:
+            try:
+                driver.execute_script("Riwayat.instance.toggleRiwayatPelayanan();")
+            except Exception as e:
+                print(f"⚠️ Gagal membuka riwayat (percobaan {percobaan}/{max_retry}): {str(e)[:30]}")
+                if percobaan < max_retry:
+                    time.sleep(1)
+                    continue
+                return False
 
-    baris_terpilih, faskes_terpilih = pilih_baris_riwayat_berdasarkan_tanggal(driver, tgl_rujukan)
-    if not baris_terpilih:
-        print(f"⚠️ Riwayat dengan tanggal {tgl_rujukan} tidak ditemukan setelah simpan.")
-        return False
+        tunggu_loading_pace(driver)
+        try:
+            WebDriverWait(driver, 20).until(EC.invisibility_of_element_located((By.ID, "riwayatPelayanan_processing")))
+        except:
+            pass
+        try:
+            WebDriverWait(driver, 12).until(EC.visibility_of_element_located((By.ID, "riwayatPelayanan")))
+        except Exception:
+            print(f"⚠️ Tabel riwayat tidak muncul (percobaan {percobaan}/{max_retry}).")
+            if percobaan < max_retry:
+                time.sleep(1)
+                continue
+            return False
 
-    if "LABKES" in faskes_terpilih.upper():
-        print(f"-> Riwayat LABKESDA ditemukan (setelah simpan): {faskes_terpilih}")
-    else:
-        print(f"-> Riwayat LABKESDA tidak ditemukan (setelah simpan), memakai baris: {faskes_terpilih or '-'}")
+        baris_terpilih, faskes_terpilih = pilih_baris_riwayat_berdasarkan_tanggal(driver, tgl_rujukan)
+        if not baris_terpilih:
+            print(f"⚠️ Riwayat dengan tanggal {tgl_rujukan} tidak ditemukan setelah simpan (percobaan {percobaan}/{max_retry}).")
+            if percobaan < max_retry:
+                time.sleep(1)
+                continue
+            return False
 
-    btn_pilih = baris_terpilih.find_element(By.XPATH, ".//button[contains(@class, 'btnView')]")
-    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", btn_pilih)
-    time.sleep(0.5)
-    btn_pilih.click()
-    tunggu_loading_pace(driver)
-    time.sleep(1.0)
-    if not tunggu_tab_nonkapi(driver):
-        print("⚠️ Tab Non Kapitasi belum muncul, melanjutkan dengan hati-hati.")
-    return True
+        if "LABKES" in faskes_terpilih.upper():
+            print(f"-> Riwayat LABKESDA ditemukan (setelah simpan): {faskes_terpilih}")
+        else:
+            if require_labkes:
+                print(
+                    f"⚠️ Riwayat LABKESDA tidak ditemukan setelah simpan "
+                    f"(percobaan {percobaan}/{max_retry})."
+                )
+                if percobaan < max_retry:
+                    time.sleep(1)
+                    continue
+                return False
+            print(f"-> Riwayat LABKESDA tidak ditemukan (setelah simpan), memakai baris: {faskes_terpilih or '-'}")
+
+        try:
+            btn_pilih = baris_terpilih.find_element(By.XPATH, ".//button[contains(@class, 'btnView')]")
+            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", btn_pilih)
+            time.sleep(0.5)
+            btn_pilih.click()
+        except Exception as e:
+            print(f"⚠️ Gagal klik baris riwayat (percobaan {percobaan}/{max_retry}): {str(e)[:30]}")
+            if percobaan < max_retry:
+                time.sleep(1)
+                continue
+            return False
+
+        tunggu_loading_pace(driver)
+        time.sleep(1.0)
+        if not tunggu_tab_nonkapi(driver):
+            print("⚠️ Tab Non Kapitasi belum muncul, melanjutkan dengan hati-hati.")
+        return True
+    return False
 
 def pilih_baris_riwayat_berdasarkan_tanggal(driver, tgl_rujukan):
     baris_riwayat = driver.find_elements(
@@ -732,127 +763,162 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                     elif tanya_isi == 'a': yes_to_all = True
 
             if not gunakan_riwayat_lab:
-                # 11. Mulai Input Pemeriksaan Baru
-                print("-> Membuka form input kunjungan...")
-                driver.find_element(By.ID, "btnCariPendaftaran").click() 
-                WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.ID, "panelEntriKunjungan")))
-                tunggu_loading_pace(driver)
-                time.sleep(1)
-                
-                # A. Keluhan & Anamnesa
-                txt_keluhan = ""
-                if "DM" in penyakit_upper and "HT" in penyakit_upper: txt_keluhan = "diabetes mellitus dan hipertensi"
-                elif "DM" in penyakit_upper: txt_keluhan = "diabetes mellitus"
-                elif "HT" in penyakit_upper: txt_keluhan = "hipertensi"
-                else: txt_keluhan = "pemeriksaan rutin"
-
-                driver.find_element(By.ID, "keluhan").send_keys(txt_keluhan)
-                driver.find_element(By.ID, "anamnesa_txt").send_keys(txt_keluhan)
-                
-                # B. Riwayat Alergi
-                pilih_select2(driver, "alergiMakan_slc", "Tidak Ada")
-                pilih_select2(driver, "alergiUdara_slc", "Tidak Ada")
-                pilih_select2(driver, "alergiObat_slc", "Tidak Ada")
-                
-                # C. Prognosa
-                pilih_select2(driver, "prognosa_slc", "Bonam")
-                
-                # D. Terapi Obat & Non Obat
-                driver.find_element(By.ID, "terapiMedikamentosa_txt").send_keys("----")
-                driver.find_element(By.ID, "terapiNonMedikamentosa_txt").send_keys("----")
-                
-                # E. Diagnosa
-                if "DM" in penyakit_upper and "HT" in penyakit_upper: kode_diag = "e11.9"
-                elif "DM" in penyakit_upper: kode_diag = "e11.9"
-                elif "HT" in penyakit_upper: kode_diag = "i10"
-                else: kode_diag = "e11.9"
-                    
-                inp_diag = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "kddiagnosa1")))
-                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", inp_diag)
-                time.sleep(0.5)
-                
-                inp_diag.click()
-                time.sleep(0.2)
-                inp_diag.send_keys(Keys.CONTROL + "a")
-                inp_diag.send_keys(Keys.BACKSPACE)
-                time.sleep(0.2)
-                inp_diag.send_keys(kode_diag)
-                time.sleep(0.5)
-                inp_diag.send_keys(Keys.TAB) 
-                
-                try:
-                    WebDriverWait(driver, 5).until(lambda d: len(d.find_element(By.ID, "nmdiagnosa1").get_attribute("value").strip()) > 2)
-                except:
-                    driver.execute_script("PemDokkel.instance.readNamaDiagnosa('diagnosa1');")
+                # 11. Mulai Input Pemeriksaan Baru (retry jika riwayat LABKESDA belum muncul)
+                simpan_berhasil = False
+                for percobaan_simpan in range(1, 4):
+                    print("-> Membuka form input kunjungan...")
+                    driver.find_element(By.ID, "btnCariPendaftaran").click() 
+                    WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.ID, "panelEntriKunjungan")))
+                    tunggu_loading_pace(driver)
                     time.sleep(1)
-                
-                # F. Input Data Klinis
-                driver.find_element(By.ID, "suhu_txt").send_keys(data_klinis['suhu'])
-                driver.find_element(By.ID, "tinggiBadan").send_keys(data_klinis['tinggi'])
-                driver.find_element(By.ID, "beratBadan").send_keys(data_klinis['berat'])
-                driver.find_element(By.ID, "lingkarPerut").send_keys(data_klinis['lingkar'])
-                driver.find_element(By.ID, "sistole").send_keys(data_klinis['sistole'])
-                driver.find_element(By.ID, "diastole").send_keys(data_klinis['diastole'])
-                driver.find_element(By.ID, "respRate").send_keys(data_klinis['resprate'])
-                driver.find_element(By.ID, "heartRate").send_keys(data_klinis['heartrate'])
-                
-                # G. Tenaga Medis
-                if tenaga_medis_tersimpan is None:
-                    container_medis = driver.find_element(By.XPATH, "//select[@id='tenagamedis']/following-sibling::span")
-                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", container_medis)
-                    time.sleep(0.5)
-                    container_medis.click()
-                    time.sleep(0.5)
                     
-                    elemen_nama = driver.find_elements(By.XPATH, "//ul[@id='select2-tenagamedis-results']//li[@role='treeitem']")
-                    daftar_nama_medis = [el.text for el in elemen_nama if el.text.strip() != ""]
-                    driver.find_element(By.TAG_NAME, 'body').click() 
-                    time.sleep(0.5)
-                    
-                    idx_terpilih, tenaga_medis_tersimpan = menu_interaktif(daftar_nama_medis, "Pilih Tenaga Medis untuk sesi ini:")
-                    print(f"-> Memilih tenaga medis: {tenaga_medis_tersimpan}")
-                
-                pilih_select2(driver, "tenagamedis", tenaga_medis_tersimpan)
-                
-                # H. Pelayanan Non Kapitasi
-                container_non_kapitasi = driver.find_element(By.XPATH, "//select[@id='listNonKapitasi_slc']/following-sibling::span")
-                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", container_non_kapitasi)
-                time.sleep(0.5)
-                
-                if "DM" in penyakit_upper:
-                    container_non_kapitasi.click(); time.sleep(0.5)
-                    driver.find_element(By.XPATH, "//ul[@id='select2-listNonKapitasi_slc-results']//li[contains(., 'Pelayanan Gula Darah')]").click()
-                    time.sleep(0.5)
-                    container_non_kapitasi.click(); time.sleep(0.5)
-                    driver.find_element(By.XPATH, "//ul[@id='select2-listNonKapitasi_slc-results']//li[contains(., 'Pelayanan Kimia Darah')]").click()
-                    time.sleep(0.5)
-                    container_non_kapitasi.click(); time.sleep(0.5)
-                    driver.find_element(By.XPATH, "//ul[@id='select2-listNonKapitasi_slc-results']//li[contains(., 'Pelayanan HbA1c')]").click()
-                elif "HT" in penyakit_upper:
-                    container_non_kapitasi.click(); time.sleep(0.5)
-                    driver.find_element(By.XPATH, "//ul[@id='select2-listNonKapitasi_slc-results']//li[contains(., 'Pelayanan Kimia Darah')]").click()
-                
-                time.sleep(0.5)
-                driver.find_element(By.TAG_NAME, 'body').click() 
-                
-                # I. Status Pulang
-                pilih_select2(driver, "statuspulang", "Berobat Jalan")
-                
-                # J. Simpan
-                btn_simpan = driver.find_element(By.ID, "btnSimpan")
-                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", btn_simpan)
-                time.sleep(0.5)
-                btn_simpan.click()
-                print("-> Menyimpan kunjungan utama...")
-                
-                try:
-                    WebDriverWait(driver, 5).until(EC.alert_is_present())
-                    alert = driver.switch_to.alert
-                    alert.accept()
-                except: pass
-                tunggu_loading_pace(driver)
+                    # A. Keluhan & Anamnesa
+                    txt_keluhan = ""
+                    if "DM" in penyakit_upper and "HT" in penyakit_upper: txt_keluhan = "diabetes mellitus dan hipertensi"
+                    elif "DM" in penyakit_upper: txt_keluhan = "diabetes mellitus"
+                    elif "HT" in penyakit_upper: txt_keluhan = "hipertensi"
+                    else: txt_keluhan = "pemeriksaan rutin"
 
-                if not buka_riwayat_setelah_simpan(driver, tgl_rujukan):
+                    keluhan_el = driver.find_element(By.ID, "keluhan")
+                    keluhan_el.clear()
+                    keluhan_el.send_keys(txt_keluhan)
+                    anamnesa_el = driver.find_element(By.ID, "anamnesa_txt")
+                    anamnesa_el.clear()
+                    anamnesa_el.send_keys(txt_keluhan)
+                    
+                    # B. Riwayat Alergi
+                    pilih_select2(driver, "alergiMakan_slc", "Tidak Ada")
+                    pilih_select2(driver, "alergiUdara_slc", "Tidak Ada")
+                    pilih_select2(driver, "alergiObat_slc", "Tidak Ada")
+                    
+                    # C. Prognosa
+                    pilih_select2(driver, "prognosa_slc", "Bonam")
+                    
+                    # D. Terapi Obat & Non Obat
+                    terapi_med = driver.find_element(By.ID, "terapiMedikamentosa_txt")
+                    terapi_med.clear()
+                    terapi_med.send_keys("----")
+                    terapi_non = driver.find_element(By.ID, "terapiNonMedikamentosa_txt")
+                    terapi_non.clear()
+                    terapi_non.send_keys("----")
+                    
+                    # E. Diagnosa
+                    if "DM" in penyakit_upper and "HT" in penyakit_upper: kode_diag = "e11.9"
+                    elif "DM" in penyakit_upper: kode_diag = "e11.9"
+                    elif "HT" in penyakit_upper: kode_diag = "i10"
+                    else: kode_diag = "e11.9"
+                        
+                    inp_diag = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "kddiagnosa1")))
+                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", inp_diag)
+                    time.sleep(0.5)
+                    
+                    inp_diag.click()
+                    time.sleep(0.2)
+                    inp_diag.send_keys(Keys.CONTROL + "a")
+                    inp_diag.send_keys(Keys.BACKSPACE)
+                    time.sleep(0.2)
+                    inp_diag.send_keys(kode_diag)
+                    time.sleep(0.5)
+                    inp_diag.send_keys(Keys.TAB) 
+                    
+                    try:
+                        WebDriverWait(driver, 5).until(lambda d: len(d.find_element(By.ID, "nmdiagnosa1").get_attribute("value").strip()) > 2)
+                    except:
+                        driver.execute_script("PemDokkel.instance.readNamaDiagnosa('diagnosa1');")
+                        time.sleep(1)
+                    
+                    # F. Input Data Klinis
+                    suhu_el = driver.find_element(By.ID, "suhu_txt")
+                    suhu_el.clear()
+                    suhu_el.send_keys(data_klinis['suhu'])
+                    tinggi_el = driver.find_element(By.ID, "tinggiBadan")
+                    tinggi_el.clear()
+                    tinggi_el.send_keys(data_klinis['tinggi'])
+                    berat_el = driver.find_element(By.ID, "beratBadan")
+                    berat_el.clear()
+                    berat_el.send_keys(data_klinis['berat'])
+                    lingkar_el = driver.find_element(By.ID, "lingkarPerut")
+                    lingkar_el.clear()
+                    lingkar_el.send_keys(data_klinis['lingkar'])
+                    sistole_el = driver.find_element(By.ID, "sistole")
+                    sistole_el.clear()
+                    sistole_el.send_keys(data_klinis['sistole'])
+                    diastole_el = driver.find_element(By.ID, "diastole")
+                    diastole_el.clear()
+                    diastole_el.send_keys(data_klinis['diastole'])
+                    resp_el = driver.find_element(By.ID, "respRate")
+                    resp_el.clear()
+                    resp_el.send_keys(data_klinis['resprate'])
+                    hr_el = driver.find_element(By.ID, "heartRate")
+                    hr_el.clear()
+                    hr_el.send_keys(data_klinis['heartrate'])
+                    
+                    # G. Tenaga Medis
+                    if tenaga_medis_tersimpan is None:
+                        container_medis = driver.find_element(By.XPATH, "//select[@id='tenagamedis']/following-sibling::span")
+                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", container_medis)
+                        time.sleep(0.5)
+                        container_medis.click()
+                        time.sleep(0.5)
+                        
+                        elemen_nama = driver.find_elements(By.XPATH, "//ul[@id='select2-tenagamedis-results']//li[@role='treeitem']")
+                        daftar_nama_medis = [el.text for el in elemen_nama if el.text.strip() != ""]
+                        driver.find_element(By.TAG_NAME, 'body').click() 
+                        time.sleep(0.5)
+                        
+                        idx_terpilih, tenaga_medis_tersimpan = menu_interaktif(daftar_nama_medis, "Pilih Tenaga Medis untuk sesi ini:")
+                        print(f"-> Memilih tenaga medis: {tenaga_medis_tersimpan}")
+                    
+                    pilih_select2(driver, "tenagamedis", tenaga_medis_tersimpan)
+                    
+                    # H. Pelayanan Non Kapitasi
+                    container_non_kapitasi = driver.find_element(By.XPATH, "//select[@id='listNonKapitasi_slc']/following-sibling::span")
+                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", container_non_kapitasi)
+                    time.sleep(0.5)
+                    
+                    if "DM" in penyakit_upper:
+                        container_non_kapitasi.click(); time.sleep(0.5)
+                        driver.find_element(By.XPATH, "//ul[@id='select2-listNonKapitasi_slc-results']//li[contains(., 'Pelayanan Gula Darah')]").click()
+                        time.sleep(0.5)
+                        container_non_kapitasi.click(); time.sleep(0.5)
+                        driver.find_element(By.XPATH, "//ul[@id='select2-listNonKapitasi_slc-results']//li[contains(., 'Pelayanan Kimia Darah')]").click()
+                        time.sleep(0.5)
+                        container_non_kapitasi.click(); time.sleep(0.5)
+                        driver.find_element(By.XPATH, "//ul[@id='select2-listNonKapitasi_slc-results']//li[contains(., 'Pelayanan HbA1c')]").click()
+                    elif "HT" in penyakit_upper:
+                        container_non_kapitasi.click(); time.sleep(0.5)
+                        driver.find_element(By.XPATH, "//ul[@id='select2-listNonKapitasi_slc-results']//li[contains(., 'Pelayanan Kimia Darah')]").click()
+                    
+                    time.sleep(0.5)
+                    driver.find_element(By.TAG_NAME, 'body').click() 
+                    
+                    # I. Status Pulang
+                    pilih_select2(driver, "statuspulang", "Berobat Jalan")
+                    
+                    # J. Simpan
+                    btn_simpan = driver.find_element(By.ID, "btnSimpan")
+                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", btn_simpan)
+                    time.sleep(0.5)
+                    btn_simpan.click()
+                    print("-> Menyimpan kunjungan utama...")
+                    
+                    try:
+                        WebDriverWait(driver, 5).until(EC.alert_is_present())
+                        alert = driver.switch_to.alert
+                        alert.accept()
+                    except: pass
+                    tunggu_loading_pace(driver)
+
+                    if buka_riwayat_setelah_simpan(driver, tgl_rujukan, require_labkes=True):
+                        simpan_berhasil = True
+                        break
+
+                    print(f"⚠️ Kunjungan belum tercatat di LABKESDA. Ulang simpan ({percobaan_simpan}/3).")
+                    time.sleep(1)
+
+                if not simpan_berhasil:
+                    sheet_data.cell(row=row, column=29).value = "NOT COMPLETE"
+                    wb_data.save(path_file)
                     continue
             
             # L. PENGISIAN PELAYANAN NON KAPITASI (HASIL LAB DARI EXCEL)
@@ -876,7 +942,7 @@ def jalankan_pelayanan(driver, wb_data, sheet_data, path_file):
                 if perlu_gdp:
                     target_biaya += 12500
                 if perlu_hba1c:
-                    target_biaya += 170000
+                    target_biaya += 155000
             lab_sudah_dicek = False
             stop_semua = False
             lab_sudah_diinput = False
